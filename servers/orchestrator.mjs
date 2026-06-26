@@ -72,26 +72,28 @@ server.tool(
   'Spawn a parallel AI engineering team in the current repo: decompose the goal, create one isolated git worktree per part, run each with its own Claude agent in parallel, verify with tests, and merge passing parts into a forge/integration branch. Returns a report; the user reviews and merges to their main branch.',
   {
     goal: z.string().describe('The goal to build.'),
+    targetRepo: z.string().optional().describe('Absolute path to the git repo to build in. Defaults to the current project (CLAUDE_PROJECT_DIR).'),
     budget: z.number().optional().describe('Max total USD spend before the kill-switch trips (default 2.0).'),
   },
-  async ({ goal, budget }) => {
+  async ({ goal, budget, targetRepo }) => {
+    const repo = targetRepo || REPO
     const cap = budget || 2.0
-    const base = git(REPO, ['rev-parse', '--abbrev-ref', 'HEAD'])
+    const base = git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])
     const abort = new AbortController()
     let spent = 0
     const charge = (c) => { spent += c || 0; if (spent > cap && !abort.signal.aborted) abort.abort() }
 
     const p = await plan(goal, abort); charge(p.cost)
     const parts = p.parts
-    const out = ['BranchForge run — goal: ' + goal, 'repo: ' + REPO, 'base: ' + base + '   parts: ' + parts.length, '']
+    const out = ['BranchForge run — goal: ' + goal, 'repo: ' + repo, 'base: ' + base + '   parts: ' + parts.length, '']
 
     async function runPart(part) {
       if (abort.signal.aborted) return { ...part, skipped: true }
       const branch = 'forge/p-' + part.id
-      const wt = join(REPO, '.forge', 'wt-' + part.id)
-      try { git(REPO, ['worktree', 'remove', '--force', wt]) } catch {}
-      try { git(REPO, ['branch', '-D', branch]) } catch {}
-      git(REPO, ['worktree', 'add', '-b', branch, wt, base])
+      const wt = join(repo, '.forge', 'wt-' + part.id)
+      try { git(repo, ['worktree', 'remove', '--force', wt]) } catch {}
+      try { git(repo, ['branch', '-D', branch]) } catch {}
+      git(repo, ['worktree', 'add', '-b', branch, wt, base])
       const r = await runAgent(part.task + '\n\nWork only inside this worktree; keep changes focused on your part.', wt, abort)
       charge(r.cost)
       git(wt, ['add', '-A'])
@@ -107,10 +109,10 @@ server.tool(
     }))
 
     const intBranch = 'forge/integration'
-    const intWt = join(REPO, '.forge', 'wt-integration')
-    try { git(REPO, ['worktree', 'remove', '--force', intWt]) } catch {}
-    try { git(REPO, ['branch', '-D', intBranch]) } catch {}
-    git(REPO, ['worktree', 'add', '-b', intBranch, intWt, base])
+    const intWt = join(repo, '.forge', 'wt-integration')
+    try { git(repo, ['worktree', 'remove', '--force', intWt]) } catch {}
+    try { git(repo, ['branch', '-D', intBranch]) } catch {}
+    git(repo, ['worktree', 'add', '-b', intBranch, intWt, base])
     const merged = []
     for (const r of results) {
       if (!r || r.skipped || !r.branch) continue
@@ -127,8 +129,8 @@ server.tool(
     out.push('Integration branch: ' + intBranch + '   merged: ' + (merged.join(', ') || 'none') + '   gate=' + (intGate || 'none'))
     out.push('Total cost: $' + spent.toFixed(4) + (abort.signal.aborted ? '   (budget kill-switch hit)' : ''))
     out.push('')
-    out.push('Review:  git -C ' + REPO + ' diff ' + base + '..' + intBranch)
-    out.push('Land:    git -C ' + REPO + ' checkout ' + base + ' && git merge ' + intBranch)
+    out.push('Review:  git -C ' + repo + ' diff ' + base + '..' + intBranch)
+    out.push('Land:    git -C ' + repo + ' checkout ' + base + ' && git merge ' + intBranch)
     return { content: [{ type: 'text', text: out.join('\n') }] }
   }
 )

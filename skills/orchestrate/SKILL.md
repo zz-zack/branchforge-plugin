@@ -8,7 +8,7 @@ The user's goal is in `$ARGUMENTS`. Treat the user's current Claude Code session
 
 1. Call the **`forge_plan`** MCP tool with the goal. It returns a decomposition into independent parts (each owning disjoint files). **Show the plan to the user** and let them adjust or approve it — this is the cheapest place to correct course, before any agents run.
 
-2. On approval, call the **`forge_run`** MCP tool with the goal. It will, entirely locally in the user's repo:
+2. On approval, call the **`forge_run`** MCP tool with the goal. Pass `targetRepo` (an absolute path) if the user wants to build in a different repo than the current project — e.g. starting a brand-new product in a fresh directory. It will, entirely locally in that repo:
    - create one isolated `git worktree` per part,
    - run each part with its **own Claude agent in parallel** (separate process, separate context),
    - run verification (tests) inside each worktree,
