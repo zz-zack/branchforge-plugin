@@ -37645,9 +37645,18 @@ function query({
 // servers/orchestrator.mjs
 var REPO = process.env.BF_PROJECT_DIR || process.env.CLAUDE_PROJECT_DIR || process.cwd();
 var git = (cwd2, args) => execFileSync("git", args, { cwd: cwd2, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).trim();
+function findClaude() {
+  if (process.env.CLAUDE_CODE_PATH) return process.env.CLAUDE_CODE_PATH;
+  try {
+    return execFileSync("which", ["claude"], { encoding: "utf8" }).trim();
+  } catch (e) {
+  }
+  return "claude";
+}
+var CLAUDE = findClaude();
 async function runAgent(prompt, cwd2, abort) {
   let text = "", cost = 0;
-  const res = query({ prompt, options: { cwd: cwd2, permissionMode: "bypassPermissions", abortController: abort } });
+  const res = query({ prompt, options: { cwd: cwd2, permissionMode: "bypassPermissions", abortController: abort, pathToClaudeCodeExecutable: CLAUDE } });
   for await (const m of res) {
     if (m.type === "assistant") {
       for (const b of m.message.content) if (b.type === "text") text += b.text;

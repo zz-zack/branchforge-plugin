@@ -15,9 +15,18 @@ import { query } from '@anthropic-ai/claude-agent-sdk'
 const REPO = process.env.BF_PROJECT_DIR || process.env.CLAUDE_PROJECT_DIR || process.cwd()
 const git = (cwd, args) => execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).trim()
 
+// Use the user's installed Claude Code binary (this is a Claude Code plugin — they have it),
+// instead of the heavy cli.js the SDK vendors (which the single-file bundle can't locate).
+function findClaude() {
+  if (process.env.CLAUDE_CODE_PATH) return process.env.CLAUDE_CODE_PATH
+  try { return execFileSync('which', ['claude'], { encoding: 'utf8' }).trim() } catch (e) {}
+  return 'claude'
+}
+const CLAUDE = findClaude()
+
 async function runAgent(prompt, cwd, abort) {
   let text = '', cost = 0
-  const res = query({ prompt, options: { cwd, permissionMode: 'bypassPermissions', abortController: abort } })
+  const res = query({ prompt, options: { cwd, permissionMode: 'bypassPermissions', abortController: abort, pathToClaudeCodeExecutable: CLAUDE } })
   for await (const m of res) {
     if (m.type === 'assistant') { for (const b of m.message.content) if (b.type === 'text') text += b.text }
     else if (m.type === 'result') cost = m.total_cost_usd || 0
