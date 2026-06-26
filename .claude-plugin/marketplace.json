@@ -1,0 +1,11 @@
+{
+  "name": "branchforge",
+  "owner": { "name": "zz-zack" },
+  "plugins": [
+    {
+      "name": "branchforge",
+      "source": ".",
+      "description": "Run an AI engineering team in parallel git worktrees — one goal in, a verified merged branch out."
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "branchforge": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/servers/orchestrator.mjs"],
+      "env": {
+        "BF_PROJECT_DIR": "${CLAUDE_PROJECT_DIR}"
+      }
+    }
+  }
+}
