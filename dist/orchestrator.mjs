@@ -37716,7 +37716,7 @@ function gate(cwd2) {
 }
 async function plan(goal, abort) {
   const tmp = mkdtempSync(join4(tmpdir(), "bf-lead-"));
-  const prompt = "You are a tech lead. Goal: " + goal + '\n\nDecompose into INDEPENDENT parts that separate agents can build in parallel without talking to each other, each owning DISJOINT files. Prefer 2-4 parts; if the goal is small, return a single part. Output ONLY JSON: {"parts":[{"id":"a","title":"short","task":"what this agent does, incl. the files it owns"}]}';
+  const prompt = "You are a tech lead. Goal: " + goal + '\n\nDecompose into INDEPENDENT parts that separate agents build in parallel without talking to each other, each owning DISJOINT files. CRITICAL: split by FEATURE/MODULE, never by LAYER. Each part that writes code MUST also write its own tests for that code, in the same part \u2014 never put tests in a separate part from the code they test (a test-only part in an isolated worktree has nothing to import and produces nothing useful). Every part must build and test on its own. A single shared scaffold/config part (package.json, tsconfig, etc.) is fine, but code parts own their own tests. Prefer 2-4 parts; if the goal is small, return a single part. Output ONLY JSON: {"parts":[{"id":"a","title":"short","task":"what this agent builds, including the files it owns AND its tests"}]}';
   const r = await runAgent(prompt, tmp, abort);
   let parsed;
   try {
@@ -37727,7 +37727,7 @@ async function plan(goal, abort) {
   parsed.cost = r.cost || 0;
   return parsed;
 }
-var server = new McpServer({ name: "branchforge", version: "0.2.2" });
+var server = new McpServer({ name: "branchforge", version: "0.2.3" });
 server.tool(
   "forge_plan",
   "Decompose a goal into independent parallel parts for the user to review BEFORE running. Returns a JSON plan; does not modify the repo.",

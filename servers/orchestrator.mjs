@@ -83,9 +83,11 @@ async function plan(goal, abort) {
   const tmp = mkdtempSync(join(tmpdir(), 'bf-lead-'))
   const prompt =
     'You are a tech lead. Goal: ' + goal + '\n\n' +
-    'Decompose into INDEPENDENT parts that separate agents can build in parallel without talking to each other, each owning DISJOINT files. ' +
+    'Decompose into INDEPENDENT parts that separate agents build in parallel without talking to each other, each owning DISJOINT files. ' +
+    'CRITICAL: split by FEATURE/MODULE, never by LAYER. Each part that writes code MUST also write its own tests for that code, in the same part — never put tests in a separate part from the code they test (a test-only part in an isolated worktree has nothing to import and produces nothing useful). Every part must build and test on its own. ' +
+    'A single shared scaffold/config part (package.json, tsconfig, etc.) is fine, but code parts own their own tests. ' +
     'Prefer 2-4 parts; if the goal is small, return a single part. ' +
-    'Output ONLY JSON: {"parts":[{"id":"a","title":"short","task":"what this agent does, incl. the files it owns"}]}'
+    'Output ONLY JSON: {"parts":[{"id":"a","title":"short","task":"what this agent builds, including the files it owns AND its tests"}]}'
   const r = await runAgent(prompt, tmp, abort)
   let parsed
   try { parsed = JSON.parse(r.text.match(/\{[\s\S]*\}/)[0]) } catch { parsed = { parts: [{ id: 'a', title: goal.slice(0, 30), task: goal }] } }
@@ -93,7 +95,7 @@ async function plan(goal, abort) {
   return parsed
 }
 
-const server = new McpServer({ name: 'branchforge', version: '0.2.2' })
+const server = new McpServer({ name: 'branchforge', version: '0.2.3' })
 
 server.tool(
   'forge_plan',
