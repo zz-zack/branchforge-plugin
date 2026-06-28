@@ -70,13 +70,15 @@ Three load-bearing ideas: **contracts** (parts depend on a shared spec, not each
 
 ## Status
 
-`v0.2` — `forge_plan` + `forge_run` work, with a real **verification inner loop**:
+`v0.3.0` — the three harness pillars are in place:
 
-- **Smart gate** — detects the project's `package.json` test script (or test files anywhere, run via `node --experimental-strip-types --test` for TypeScript), instead of only top-level `*.test.js`.
-- **Self-heal** — when the gate fails, the failure output is fed back to the same agent to fix, up to `heal` rounds (default 2), per part *and* for the merged integration. "Done" is proven by tests, not claimed.
-- `forge_run` args: `goal`, `targetRepo?` (build in any repo), `budget?`, `heal?`.
+- **Contract layer** — pass a `contract` (a `node:test` file). Every part is told to build against it, and it gates the *merged* whole — catching the semantic mismatches that `git merge` accepts but that break the integrated result.
+- **Verification inner loop** — a **smart gate** (detects the `package.json` test script, or test files anywhere run via `node --experimental-strip-types --test` for TypeScript; auto-`npm install`s in fresh worktrees) plus **self-heal**: on failure the output is fed back to the same agent to fix, up to `heal` rounds (default 2), per part *and* for the integration. "Done" is proven by tests, not claimed.
+- **Integration self-heal** — passing parts merge into `forge/integration` (conflicts kept via `-X ours` instead of dropping a part); the merged whole must pass too.
 
-Roadmap: plan-approval as a first-class two-step, richer contracts, async/resumable long runs, and an optional visual companion app (live worktree office + IDE diff view).
+`forge_run` args: `goal`, `targetRepo?` (build in any repo), `budget?`, `heal?`, `contract?`.
+
+Roadmap: plan-approval as a first-class two-step, async/resumable long runs, and an optional visual companion app (live worktree office + IDE diff view).
 
 ## License
 

@@ -1,7 +1,7 @@
 {
   "name": "branchforge",
   "description": "Run an AI engineering team in parallel git worktrees — one goal in, a verified merged branch out.",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "author": { "name": "zz-zack" },
   "homepage": "https://github.com/zz-zack/branchforge-plugin",
   "repository": "https://github.com/zz-zack/branchforge-plugin",

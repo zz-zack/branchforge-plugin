@@ -7,7 +7,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { execFileSync } from 'node:child_process'
-import { readdirSync, mkdtempSync, existsSync, readFileSync } from 'node:fs'
+import { readdirSync, mkdtempSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { query } from '@anthropic-ai/claude-agent-sdk'
@@ -95,7 +95,7 @@ async function plan(goal, abort) {
   return parsed
 }
 
-const server = new McpServer({ name: 'branchforge', version: '0.2.3' })
+const server = new McpServer({ name: 'branchforge', version: '0.3.0' })
 
 server.tool(
   'forge_plan',
@@ -115,11 +115,13 @@ server.tool(
     targetRepo: z.string().optional().describe('Absolute path to the git repo to build in. Defaults to the current project (CLAUDE_PROJECT_DIR).'),
     budget: z.number().optional().describe('Max total USD spend before the kill-switch trips (default 2.0).'),
     heal: z.number().optional().describe('Max self-heal rounds per part and for integration when tests fail (default 2).'),
+    contract: z.string().optional().describe('A shared contract: the content of a node:test test file that the INTEGRATED result MUST pass. Given to every part as the spec to build against, written into the integration as forge.contract.test.mjs, and enforced as a gate (with self-heal) on the merged whole — this is how semantic mismatches between parts get caught.'),
   },
-  async ({ goal, budget, targetRepo, heal }) => {
+  async ({ goal, budget, targetRepo, heal, contract }) => {
     const repo = targetRepo || REPO
     const cap = budget || 2.0
     const healMax = heal == null ? 2 : heal
+    const contractNote = contract ? '\n\nThis shared CONTRACT defines the interface your part must satisfy so the integrated whole passes it. Do NOT edit or weaken it; build your code to satisfy it:\n```\n' + contract + '\n```' : ''
     const base = git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])
     const abort = new AbortController()
     let spent = 0
@@ -136,7 +138,7 @@ server.tool(
       try { git(repo, ['worktree', 'remove', '--force', wt]) } catch {}
       try { git(repo, ['branch', '-D', branch]) } catch {}
       git(repo, ['worktree', 'add', '-b', branch, wt, base])
-      let r = await runAgent(part.task + '\n\nWork only inside this worktree; keep changes focused on your part. Do NOT create or edit repo-root files (README, package.json, tsconfig, .gitignore) unless your part explicitly owns them — it avoids merge conflicts with the other agents. Include unit tests and a working test setup so `node --test` (or the package.json test script) passes.', wt, abort)
+      let r = await runAgent(part.task + '\n\nWork only inside this worktree; keep changes focused on your part. Do NOT create or edit repo-root files (README, package.json, tsconfig, .gitignore) unless your part explicitly owns them — it avoids merge conflicts with the other agents. Include unit tests and a working test setup so `node --test` (or the package.json test script) passes.' + contractNote, wt, abort)
       let cost = r.cost; charge(r.cost)
       git(wt, ['add', '-A'])
       try { git(wt, ['commit', '-q', '-m', 'forge: ' + (part.title || part.id)]) } catch {}
@@ -177,14 +179,29 @@ server.tool(
         catch { try { git(intWt, ['merge', '--abort']) } catch {} }
       }
     }
-    let intGate = gate(intWt), intHeals = 0
+    // Contract layer: enforce a shared contract test on the MERGED whole (catches cross-part
+    // semantic mismatches that git merges cleanly but breaks). It becomes the integration gate.
+    if (contract) {
+      try { writeFileSync(join(intWt, 'forge.contract.test.mjs'), contract); git(intWt, ['add', '-A']); git(intWt, ['commit', '-q', '-m', 'forge: contract test']) } catch (e) {}
+    }
+    const runContract = () => {
+      try { execFileSync('node', ['--experimental-strip-types', '--test', 'forge.contract.test.mjs'], { cwd: intWt, encoding: 'utf8', stdio: 'pipe' }); return { status: 'PASS', output: '' } }
+      catch (e) { return { status: 'FAIL', output: ((e.stdout || '') + (e.stderr || '')).slice(-2500) } }
+    }
+    const intCheck = () => {
+      const g = gate(intWt)
+      if (g.status === 'FAIL') return g
+      if (contract) return runContract()
+      return g
+    }
+    let intGate = intCheck(), intHeals = 0
     while (intGate.status === 'FAIL' && intHeals < healMax && !abort.signal.aborted) {
       intHeals++
-      const fix = await runAgent('The merged integration fails its tests. Fix the integrated code (do NOT delete tests) so they pass. Failure output:\n' + intGate.output, intWt, abort)
+      const fix = await runAgent('The merged integration fails its tests (this includes the shared contract). Fix the integrated code so they pass — do NOT delete or weaken any tests or the contract. Failure output:\n' + intGate.output, intWt, abort)
       charge(fix.cost)
       git(intWt, ['add', '-A'])
       try { git(intWt, ['commit', '-q', '-m', 'forge: integration heal ' + intHeals]) } catch {}
-      intGate = gate(intWt)
+      intGate = intCheck()
     }
 
     for (const r of results) {

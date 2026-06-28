@@ -1,6 +1,9 @@
 {
   "name": "branchforge",
   "owner": { "name": "zz-zack" },
+  "metadata": {
+    "description": "BranchForge — run an AI engineering team in parallel git worktrees; one goal in, a verified merged branch out."
+  },
   "plugins": [
     {
       "name": "branchforge",
