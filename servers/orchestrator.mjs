@@ -7,7 +7,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { execFileSync } from 'node:child_process'
-import { readdirSync, mkdtempSync } from 'node:fs'
+import { readdirSync, mkdtempSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { query } from '@anthropic-ai/claude-agent-sdk'
@@ -24,21 +24,55 @@ function findClaude() {
 }
 const CLAUDE = findClaude()
 
-async function runAgent(prompt, cwd, abort) {
-  let text = '', cost = 0
-  const res = query({ prompt, options: { cwd, permissionMode: 'bypassPermissions', abortController: abort, pathToClaudeCodeExecutable: CLAUDE } })
+async function runAgent(prompt, cwd, abort, resume) {
+  let text = '', cost = 0, sessionId = null
+  const options = { cwd, permissionMode: 'bypassPermissions', abortController: abort, pathToClaudeCodeExecutable: CLAUDE }
+  if (resume) options.resume = resume
+  const res = query({ prompt, options })
   for await (const m of res) {
     if (m.type === 'assistant') { for (const b of m.message.content) if (b.type === 'text') text += b.text }
-    else if (m.type === 'result') cost = m.total_cost_usd || 0
+    else if (m.type === 'result') { cost = m.total_cost_usd || 0; sessionId = m.session_id }
   }
-  return { text, cost }
+  return { text, cost, sessionId }
 }
 
+// Recursively detect test files (js/ts/mjs/mts/cjs/cts) so tests in subdirs count.
+function hasTestFiles(dir, depth = 0) {
+  if (depth > 6) return false
+  let ents = []
+  try { ents = readdirSync(dir, { withFileTypes: true }) } catch { return false }
+  for (const e of ents) {
+    if (e.name === 'node_modules' || e.name === '.git' || e.name === '.forge') continue
+    if (e.isFile() && /\.test\.(c|m)?[tj]s$/.test(e.name)) return true
+    if (e.isDirectory() && hasTestFiles(join(dir, e.name), depth + 1)) return true
+  }
+  return false
+}
+function detectGate(cwd) {
+  // Prefer the project's own test script (handles TS toolchains and custom runners).
+  try {
+    const pkgPath = join(cwd, 'package.json')
+    if (existsSync(pkgPath)) {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
+      if (pkg.scripts && pkg.scripts.test && !/no test specified/i.test(pkg.scripts.test)) {
+        return { cmd: 'npm', args: ['test', '--silent'] }
+      }
+    }
+  } catch {}
+  // Else: run Node's test runner with TS type-stripping (Node >= 22.6) if any tests exist.
+  if (hasTestFiles(cwd)) return { cmd: 'node', args: ['--experimental-strip-types', '--test'] }
+  return null
+}
+// Returns { status: 'PASS'|'FAIL'|null, output } — output (on FAIL) feeds the self-heal loop.
 function gate(cwd) {
-  let files = []
-  try { files = readdirSync(cwd) } catch { return null }
-  if (!files.some((f) => /\.test\.(c|m)?js$/.test(f))) return null
-  try { execFileSync('node', ['--test'], { cwd, encoding: 'utf8', stdio: 'pipe' }); return 'PASS' } catch { return 'FAIL' }
+  const g = detectGate(cwd)
+  if (!g) return { status: null, output: '' }
+  try {
+    execFileSync(g.cmd, g.args, { cwd, encoding: 'utf8', stdio: 'pipe' })
+    return { status: 'PASS', output: '' }
+  } catch (e) {
+    return { status: 'FAIL', output: ((e.stdout || '') + (e.stderr || '')).slice(-2500) }
+  }
 }
 
 async function plan(goal, abort) {
@@ -55,7 +89,7 @@ async function plan(goal, abort) {
   return parsed
 }
 
-const server = new McpServer({ name: 'branchforge', version: '0.1.0' })
+const server = new McpServer({ name: 'branchforge', version: '0.2.0' })
 
 server.tool(
   'forge_plan',
@@ -74,10 +108,12 @@ server.tool(
     goal: z.string().describe('The goal to build.'),
     targetRepo: z.string().optional().describe('Absolute path to the git repo to build in. Defaults to the current project (CLAUDE_PROJECT_DIR).'),
     budget: z.number().optional().describe('Max total USD spend before the kill-switch trips (default 2.0).'),
+    heal: z.number().optional().describe('Max self-heal rounds per part and for integration when tests fail (default 2).'),
   },
-  async ({ goal, budget, targetRepo }) => {
+  async ({ goal, budget, targetRepo, heal }) => {
     const repo = targetRepo || REPO
     const cap = budget || 2.0
+    const healMax = heal == null ? 2 : heal
     const base = git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])
     const abort = new AbortController()
     let spent = 0
@@ -94,11 +130,21 @@ server.tool(
       try { git(repo, ['worktree', 'remove', '--force', wt]) } catch {}
       try { git(repo, ['branch', '-D', branch]) } catch {}
       git(repo, ['worktree', 'add', '-b', branch, wt, base])
-      const r = await runAgent(part.task + '\n\nWork only inside this worktree; keep changes focused on your part.', wt, abort)
-      charge(r.cost)
+      let r = await runAgent(part.task + '\n\nWork only inside this worktree; keep changes focused on your part. Include unit tests and a working test setup so `node --test` (or the package.json test script) passes.', wt, abort)
+      let cost = r.cost; charge(r.cost)
       git(wt, ['add', '-A'])
       try { git(wt, ['commit', '-q', '-m', 'forge: ' + (part.title || part.id)]) } catch {}
-      return { ...part, branch, gate: gate(wt), cost: r.cost }
+      // Verification inner loop: if the gate fails, feed the failure back and let the SAME agent fix it.
+      let g = gate(wt), heals = 0
+      while (g.status === 'FAIL' && heals < healMax && !abort.signal.aborted) {
+        heals++
+        const fix = await runAgent('Your tests are failing. Fix the code AND the test setup/scripts so they pass — do not weaken or delete tests just to make them pass. Failure output:\n' + g.output, wt, abort, r.sessionId)
+        cost += fix.cost; charge(fix.cost); r = fix
+        git(wt, ['add', '-A'])
+        try { git(wt, ['commit', '-q', '-m', 'forge: heal ' + heals + ' (' + part.id + ')']) } catch {}
+        g = gate(wt)
+      }
+      return { ...part, branch, gate: g.status, heals, cost }
     }
 
     const concurrency = Math.min(3, parts.length)
@@ -119,14 +165,22 @@ server.tool(
       try { git(intWt, ['merge', '--no-edit', r.branch]); merged.push(r.id) }
       catch { try { git(intWt, ['merge', '--abort']) } catch {} }
     }
-    const intGate = gate(intWt)
+    let intGate = gate(intWt), intHeals = 0
+    while (intGate.status === 'FAIL' && intHeals < healMax && !abort.signal.aborted) {
+      intHeals++
+      const fix = await runAgent('The merged integration fails its tests. Fix the integrated code (do NOT delete tests) so they pass. Failure output:\n' + intGate.output, intWt, abort)
+      charge(fix.cost)
+      git(intWt, ['add', '-A'])
+      try { git(intWt, ['commit', '-q', '-m', 'forge: integration heal ' + intHeals]) } catch {}
+      intGate = gate(intWt)
+    }
 
     for (const r of results) {
       if (!r) continue
-      out.push('  [' + r.id + '] ' + (r.title || '') + (r.skipped ? ' — skipped (budget)' : '   gate=' + (r.gate || 'none') + '   $' + (r.cost || 0).toFixed(4)))
+      out.push('  [' + r.id + '] ' + (r.title || '') + (r.skipped ? ' — skipped (budget)' : '   gate=' + (r.gate || 'none') + (r.heals ? '   heals=' + r.heals : '') + '   $' + (r.cost || 0).toFixed(4)))
     }
     out.push('')
-    out.push('Integration branch: ' + intBranch + '   merged: ' + (merged.join(', ') || 'none') + '   gate=' + (intGate || 'none'))
+    out.push('Integration branch: ' + intBranch + '   merged: ' + (merged.join(', ') || 'none') + '   gate=' + (intGate.status || 'none') + (intHeals ? '   heals=' + intHeals : ''))
     out.push('Total cost: $' + spent.toFixed(4) + (abort.signal.aborted ? '   (budget kill-switch hit)' : ''))
     out.push('')
     out.push('Review:  git -C ' + repo + ' diff ' + base + '..' + intBranch)
