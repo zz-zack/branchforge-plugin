@@ -67,6 +67,10 @@ function detectGate(cwd) {
 function gate(cwd) {
   const g = detectGate(cwd)
   if (!g) return { status: null, output: '' }
+  // A fresh worktree has no node_modules; an npm-test gate needs deps — best-effort install first.
+  if (g.cmd === 'npm' && !existsSync(join(cwd, 'node_modules')) && existsSync(join(cwd, 'package.json'))) {
+    try { execFileSync('npm', ['install', '--no-audit', '--no-fund', '--silent'], { cwd, stdio: 'pipe', timeout: 240000 }) } catch (e) {}
+  }
   try {
     execFileSync(g.cmd, g.args, { cwd, encoding: 'utf8', stdio: 'pipe' })
     return { status: 'PASS', output: '' }
@@ -89,7 +93,7 @@ async function plan(goal, abort) {
   return parsed
 }
 
-const server = new McpServer({ name: 'branchforge', version: '0.2.1' })
+const server = new McpServer({ name: 'branchforge', version: '0.2.2' })
 
 server.tool(
   'forge_plan',

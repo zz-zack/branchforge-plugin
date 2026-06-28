@@ -37701,6 +37701,12 @@ function detectGate(cwd2) {
 function gate(cwd2) {
   const g = detectGate(cwd2);
   if (!g) return { status: null, output: "" };
+  if (g.cmd === "npm" && !existsSync3(join4(cwd2, "node_modules")) && existsSync3(join4(cwd2, "package.json"))) {
+    try {
+      execFileSync("npm", ["install", "--no-audit", "--no-fund", "--silent"], { cwd: cwd2, stdio: "pipe", timeout: 24e4 });
+    } catch (e) {
+    }
+  }
   try {
     execFileSync(g.cmd, g.args, { cwd: cwd2, encoding: "utf8", stdio: "pipe" });
     return { status: "PASS", output: "" };
@@ -37721,7 +37727,7 @@ async function plan(goal, abort) {
   parsed.cost = r.cost || 0;
   return parsed;
 }
-var server = new McpServer({ name: "branchforge", version: "0.2.1" });
+var server = new McpServer({ name: "branchforge", version: "0.2.2" });
 server.tool(
   "forge_plan",
   "Decompose a goal into independent parallel parts for the user to review BEFORE running. Returns a JSON plan; does not modify the repo.",
