@@ -37721,7 +37721,7 @@ async function plan(goal, abort) {
   parsed.cost = r.cost || 0;
   return parsed;
 }
-var server = new McpServer({ name: "branchforge", version: "0.2.0" });
+var server = new McpServer({ name: "branchforge", version: "0.2.1" });
 server.tool(
   "forge_plan",
   "Decompose a goal into independent parallel parts for the user to review BEFORE running. Returns a JSON plan; does not modify the repo.",
@@ -37768,7 +37768,7 @@ server.tool(
       } catch {
       }
       git(repo, ["worktree", "add", "-b", branch, wt, base]);
-      let r = await runAgent(part.task + "\n\nWork only inside this worktree; keep changes focused on your part. Include unit tests and a working test setup so `node --test` (or the package.json test script) passes.", wt, abort);
+      let r = await runAgent(part.task + "\n\nWork only inside this worktree; keep changes focused on your part. Do NOT create or edit repo-root files (README, package.json, tsconfig, .gitignore) unless your part explicitly owns them \u2014 it avoids merge conflicts with the other agents. Include unit tests and a working test setup so `node --test` (or the package.json test script) passes.", wt, abort);
       let cost = r.cost;
       charge(r.cost);
       git(wt, ["add", "-A"]);
@@ -37822,6 +37822,15 @@ server.tool(
         try {
           git(intWt, ["merge", "--abort"]);
         } catch {
+        }
+        try {
+          git(intWt, ["merge", "--no-edit", "-X", "ours", r.branch]);
+          merged.push(r.id + "*");
+        } catch {
+          try {
+            git(intWt, ["merge", "--abort"]);
+          } catch {
+          }
         }
       }
     }
