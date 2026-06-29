@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.3.1
+- `budget` now defaults to **no limit** (runs to completion); the kill-switch only engages when you pass an explicit budget. The old $2 default could cut a real run off mid-way. (On a Claude subscription the reported cost is notional, not a bill.)
+
 ## 0.3.0
 - **Contract layer**: new `contract` arg to `forge_run` — a `node:test` file injected as the spec for every part and enforced (with self-heal) as a gate on the merged integration. Completes the three harness pillars (contract · verification loop · integration self-heal).
 

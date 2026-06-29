@@ -95,7 +95,7 @@ async function plan(goal, abort) {
   return parsed
 }
 
-const server = new McpServer({ name: 'branchforge', version: '0.3.0' })
+const server = new McpServer({ name: 'branchforge', version: '0.3.1' })
 
 server.tool(
   'forge_plan',
@@ -113,13 +113,13 @@ server.tool(
   {
     goal: z.string().describe('The goal to build.'),
     targetRepo: z.string().optional().describe('Absolute path to the git repo to build in. Defaults to the current project (CLAUDE_PROJECT_DIR).'),
-    budget: z.number().optional().describe('Max total USD spend before the kill-switch trips (default 2.0).'),
+    budget: z.number().optional().describe('Optional max total USD spend before the kill-switch trips. Default: no limit — runs to completion. (On a Claude subscription this cost is notional, not a real bill.)'),
     heal: z.number().optional().describe('Max self-heal rounds per part and for integration when tests fail (default 2).'),
     contract: z.string().optional().describe('A shared contract: the content of a node:test test file that the INTEGRATED result MUST pass. Given to every part as the spec to build against, written into the integration as forge.contract.test.mjs, and enforced as a gate (with self-heal) on the merged whole — this is how semantic mismatches between parts get caught.'),
   },
   async ({ goal, budget, targetRepo, heal, contract }) => {
     const repo = targetRepo || REPO
-    const cap = budget || 2.0
+    const cap = (budget == null || budget <= 0) ? Infinity : budget
     const healMax = heal == null ? 2 : heal
     const contractNote = contract ? '\n\nThis shared CONTRACT defines the interface your part must satisfy so the integrated whole passes it. Do NOT edit or weaken it; build your code to satisfy it:\n```\n' + contract + '\n```' : ''
     const base = git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])
